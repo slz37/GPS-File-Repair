@@ -6,14 +6,6 @@ from osgeo import gdal                        #Parse elevation profiles
 import matplotlib.pyplot as plt               #Plotting
 from datetime import datetime                 #Timing
 
-'''
-Sometimes the gps on your run/ride/swim/etc just sucks. Assuming that
-the total time is correct, this will take your average pace and recreate
-the bad part. It takes a gpx file created from gmap-pedometer.com that
-maps your actual route, applies the average pace to it, and combines
-the new data with your good data.
-'''
-
 def convert_time(t):
     '''
     Converts the given time to the appropriate format
@@ -56,17 +48,6 @@ def distance(lat, long):
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
     return R * c
-
-def get_elevation(lat, long):
-    #Query nationalmap.gov
-    query = (r"https://nationalmap.gov/epqs/pqs.php?x={}&y={}&units=Meters&output=xml".format(long, lat))
-    r = requests.get(query)
-
-    #Search xml for elevation
-    pattern = "(?<=Elevation>)(\d+\.\d+)|(\d+)(?=</Elevation>)"
-    elevation = re.search(pattern, r.content.decode("utf-8")).group(0)
-    
-    return elevation
 
 def parse_fit(file):
     '''
@@ -149,39 +130,11 @@ route_long[-1] = good_long[0]
 #First calculate the total time
 bad_time_tot = (bad_time[0][-1] - bad_time[0][0]) + (bad_time[1][-1] - bad_time[1][0])
 
-'''
-#Total good time is a little more complicated...
-#First grab velocity change between each pair of 2 points
-del_velocity = []
-for i in range(len(good_lat)-1):
-    d = distance([good_lat[i], good_lat[i + 1]], [good_long[i], good_long[i + 1]])
-    t = good_time[i + 1] - good_time[i]
-    del_velocity.append(d / t)
-
-#Now check threshold for velocity to prevent counting time while watch paused
-good_time_tot = 0
-for i in range(1, len(good_time)):
-    prev_time = good_time[i - 1]
-    
-    if del_velocity[i - 1] > 1.5:
-        good_time_tot += good_time[i] - prev_time
-
-#Final total time of the run
-tot_time = (bad_time_tot + good_time_tot) * TO_MINUTES
-'''
-
 #Now calculate the real total distance of the route
 route_distance = 0
 for i in range(len(route_lat) - 1):
     route_distance += distance([route_lat[i], route_lat[i+1]],
                                [route_long[i], route_long[i+1]]) * TO_MILES
-    
-'''
-good_distance = 0
-for i in range(len(good_lat) - 1):
-    good_distance += distance([good_lat[i], good_lat[i+1]], [good_long[i], good_long[i+1]]) * TO_MILES
-tot_distance = route_distance + good_distance
-'''
 
 #Calculate the average pace of the new route
 tot_pace = (bad_time_tot * TO_MINUTES) / route_distance
@@ -203,19 +156,6 @@ final_lat = route_lat + good_lat
 final_long = route_long + good_long
 final_time = route_time + good_time
 
-'''
-#Now grab elevation of each point from nationalmap
-elevation = []
-for i in range(len(final_lat)):
-    print("Elevation step {} of {}".format(i + 1, len(final_lat)))
-    ele = get_elevation(final_lat[i], final_long[i])
-    elevation.append(ele)
-
-    #Wait for crawl-delay
-    if i != len(final_lat) - 1:
-        time.sleep(10)
-'''
-
 #Open 3DEP data downloaded from https://www.usgs.gov/core-science-systems/ngp/3dep
 file_convention = "ned19_n40x00_w075x25_pa_northeast_2010"
 
@@ -223,7 +163,7 @@ file_convention = "ned19_n40x00_w075x25_pa_northeast_2010"
 geo_ele = gdal.Open("data\\" + file_convention + "\\" + file_convention + "_thumb.jpg")
 arr_ele = geo_ele.ReadAsArray() + 44 #Offset by about 44 for some reason
 
-#Grab correspond lat, long
+#Grab correspond lat, long data
 geo_coords = gdal.Open("data\\" + file_convention + "\\" + file_convention + ".img")
 arr_coords = geo_coords.ReadAsArray()
 
@@ -278,20 +218,15 @@ gpx_track.segments.append(gpx_segment)
 
 #Add points
 for i in range(len(final_long)):
-    #Convert time to yyyy-mm-ddThh-MM:ss.msmsmsZ
+    #Convert time datetime object
     t = convert_time(final_time[i])
     
     gpx_segment.points.append(gpxpy.gpx.GPXTrackPoint(final_lat[i],
                                                       final_long[i],
                                                       elevation[i],
                                                       t))
-                              
+
 #Done
 f = open("new_route.gpx", "w")
 f.write(new_gpx.to_xml())
 f.close()
-
-'''
-To do: figure out where extra 43 seconds moving time came from
-Add noise to fixed route lat/long coordinates
-'''

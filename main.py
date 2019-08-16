@@ -1,10 +1,10 @@
 import fitparse, gpxpy                        #Parsing files
 from math import sin, cos, atan2, sqrt, pi    #Calculating haversine distance
 from numpy import random                      #Add noise to pace
-import sys, requests, re, time                #System functions
 from osgeo import gdal                        #Parse elevation profiles
 import matplotlib.pyplot as plt               #Plotting
 from datetime import datetime                 #Timing
+import sys
 
 def convert_time(t):
     '''
@@ -48,6 +48,65 @@ def distance(lat, long):
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
     return R * c
+
+def load_elevation(final_lat, final_long):
+    '''
+    Calculates the elevation at a given lat/long
+    point using 3DEP data.
+    '''
+
+    #Open 3DEP data downloaded from https://www.usgs.gov/core-science-systems/ngp/3dep
+    file_convention = "ned19_n40x00_w075x25_pa_northeast_2010"
+
+    #Grab elevation data
+    geo_ele = gdal.Open("data\\" + file_convention + "\\" + file_convention + "_thumb.jpg")
+    arr_ele = geo_ele.ReadAsArray() + 44 #Offset by about 44 for some reason
+
+    #Grab correspond lat, long data
+    geo_coords = gdal.Open("data\\" + file_convention + "\\" + file_convention + ".img")
+    arr_coords = geo_coords.ReadAsArray()
+
+    #Calculate extent to scale image
+    nrows, ncols = arr_coords.shape
+    x0, dx, dxdy, y0, dydx, dy = geo_coords.GetGeoTransform()
+    x1 = x0 + dx * ncols
+    y1 = y0 + dy * nrows
+
+    #Grab elevation for the new route
+    elevation = []
+    for i in range(len(final_long)):
+        long = final_long[i]
+        lat = final_lat[i]
+
+        #Since resolution is not 1 pixel, len(arr_ele) < len(long)
+        #So, scale indices of long/lat to fit size of arr_ele
+        long_index = (long - x0) / ((x1 - x0) / 300)
+        lat_index = (y0 - lat) / ((y0 - y1) / 385)
+        ele = arr_ele[int(lat_index)][int(long_index)]
+
+        elevation.append(ele)
+
+    #Plot elevation profile
+    if PLOT:
+        plt.imshow(arr_ele, cmap = "inferno", extent = [x0, x1, y1, y0])
+        plt.plot(final_long, final_lat, c = "m")
+        plt.scatter(good_long, good_lat, c = "b")
+        plt.scatter(route_long, route_lat, c = "tab:olive")
+        plt.scatter(bad_long, bad_lat, c = "r")
+        plt.legend(["Final Route", "Good Segment", "Fixed Segment", "Bad Segment"])
+        plt.tick_params(
+            axis = "both",
+            which = "both",
+            bottom = False,
+            top = False,
+            right = False,
+            left = False,
+            labelleft = False,
+            labelbottom = False)
+        plt.show()
+        sys.exit()
+
+    return elevation
 
 def parse_fit(file):
     '''
@@ -105,7 +164,7 @@ R = 6371E3
 TO_RADIANS = pi / 180
 TO_MILES = 1 / 1609.34
 TO_MINUTES = 1 / 60
-PLOT = True
+PLOT = False
 
 #Load our .fit files
 bad_file = fitparse.FitFile("988J0721.FIT")  #Bad 0.92 miles file
@@ -123,6 +182,15 @@ bad_lat, bad_long, bad_time = parse_fit(bad_file)
 good_lat, good_long, good_time = parse_fit(good_file)
 route_lat, route_long = parse_gpx(route)
 
+#Remove duplicate points in route
+indices = []
+for i in range(len(route_lat) - 1):
+    if (route_lat[i] == route_lat[i + 1]) and (route_long[i] == route_long[i + 1]):
+        indices.append(i)
+for i in indices:
+    del route_lat[i]
+    del route_long[i]
+
 #Set ending point of route to starting point of good file
 route_lat[-1] = good_lat[0]
 route_long[-1] = good_long[0]
@@ -133,6 +201,25 @@ bad_time_tot = (bad_time[0][-1] - bad_time[0][0]) + (bad_time[1][-1] - bad_time[
 #Now calculate the real total distance of the route
 route_distance = 0
 for i in range(len(route_lat) - 1):
+    #Calculate angle of points
+    x0 = route_long[i]
+    x1 = route_long[i + 1]
+    y0 = route_lat[i]
+    y1 = route_lat[i + 1]
+    theta = atan2(y1 - y0, x1 - x0)
+
+    #Convert to [0, 2pi] and scale to [0, pi/2]
+    if theta < 0:
+        theta += 2 * pi
+    theta = theta % (pi / 2)
+    percent = theta / (pi / 2)
+    
+    #Add noise to coordinates
+    route_lat[i] = route_lat[i] + random.normal(0, 2E-5) * (1 - percent)
+    route_lat[i + 1] = route_lat[i + 1] + random.normal(0, 2E-5) * (1 - percent)
+    route_long[i] = route_long[i] + random.normal(0, 2E-5) * percent
+    route_long[i + 1] = route_long[i + 1] + random.normal(0, 2E-5) * percent
+    
     route_distance += distance([route_lat[i], route_lat[i+1]],
                                [route_long[i], route_long[i+1]]) * TO_MILES
 
@@ -147,7 +234,7 @@ for i in range(len(route_lat) - 1):
                                 [route_long[i], route_long[i + 1]]) * TO_MILES
     route_time.append(route_time[-1] + current_pace * current_distance / TO_MINUTES)
 
-#Now add fake point to account for time stopped during new portion of run
+#Now add fake point to account for time stopped during new portion of run 
 route_lat.append(route_lat[-1])
 route_long.append(route_long[-1])
 missing_time = bad_time[1][-1] - bad_time[0][0] - bad_time_tot
@@ -155,56 +242,7 @@ route_time.append(route_time[-1] + missing_time)
 final_lat = route_lat + good_lat
 final_long = route_long + good_long
 final_time = route_time + good_time
-
-#Open 3DEP data downloaded from https://www.usgs.gov/core-science-systems/ngp/3dep
-file_convention = "ned19_n40x00_w075x25_pa_northeast_2010"
-
-#Grab elevation data
-geo_ele = gdal.Open("data\\" + file_convention + "\\" + file_convention + "_thumb.jpg")
-arr_ele = geo_ele.ReadAsArray() + 44 #Offset by about 44 for some reason
-
-#Grab correspond lat, long data
-geo_coords = gdal.Open("data\\" + file_convention + "\\" + file_convention + ".img")
-arr_coords = geo_coords.ReadAsArray()
-
-#Calculate extent to scale image
-nrows, ncols = arr_coords.shape
-x0, dx, dxdy, y0, dydx, dy = geo_coords.GetGeoTransform()
-x1 = x0 + dx * ncols
-y1 = y0 + dy * nrows
-
-#Grab elevation for the new route
-elevation = []
-for i in range(len(final_long)):
-    long = final_long[i]
-    lat = final_lat[i]
-
-    #Since resolution is not 1 pixel, len(arr_ele) < len(long)
-    #So, scale indices of long/lat to fit size of arr_ele
-    long_index = (long - x0) / ((x1 - x0) / 300)
-    lat_index = (y0 - lat) / ((y0 - y1) / 385)
-    ele = arr_ele[int(lat_index)][int(long_index)]
-
-    elevation.append(ele)
-
-#Plot elevation profile
-if PLOT:
-    plt.imshow(arr_ele, cmap = "inferno", extent = [x0, x1, y1, y0])
-    plt.plot(final_long, final_lat, c = "m")
-    plt.scatter(good_long, good_lat, c = "b")
-    plt.scatter(route_long, route_lat, c = "tab:olive")
-    plt.scatter(bad_long, bad_lat, c = "r")
-    plt.legend(["Final Route", "Good Segment", "Fixed Segment", "Bad Segment"])
-    plt.tick_params(
-        axis = "both",
-        which = "both",
-        bottom = False,
-        top = False,
-        right = False,
-        left = False,
-        labelleft = False,
-        labelbottom = False)
-    plt.show()
+elevation = load_elevation(final_lat, final_long)
 
 #Finally write to new .gpx file
 new_gpx = gpxpy.gpx.GPX()

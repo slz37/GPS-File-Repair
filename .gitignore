@@ -1,0 +1,6 @@
+#FOLDERS
+data/
+
+#FILES
+*.FIT
+*.GPX

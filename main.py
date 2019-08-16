@@ -105,7 +105,7 @@ R = 6371E3
 TO_RADIANS = pi / 180
 TO_MILES = 1 / 1609.34
 TO_MINUTES = 1 / 60
-PLOT = False
+PLOT = True
 
 #Load our .fit files
 bad_file = fitparse.FitFile("988J0721.FIT")  #Bad 0.92 miles file
@@ -191,9 +191,10 @@ for i in range(len(final_long)):
 if PLOT:
     plt.imshow(arr_ele, cmap = "inferno", extent = [x0, x1, y1, y0])
     plt.plot(final_long, final_lat, c = "m")
+    plt.scatter(good_long, good_lat, c = "b")
     plt.scatter(route_long, route_lat, c = "tab:olive")
     plt.scatter(bad_long, bad_lat, c = "r")
-    plt.legend(["Final Route", "Fixed Segment", "Bad Segment"])
+    plt.legend(["Final Route", "Good Segment", "Fixed Segment", "Bad Segment"])
     plt.tick_params(
         axis = "both",
         which = "both",

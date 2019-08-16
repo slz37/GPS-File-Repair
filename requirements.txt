@@ -1,4 +1,4 @@
-fiparse==1.1.0
+fitparse==1.1.0
 GDAL==2.4.1
 gpx-parser==0.0.4
 gpxpy==1.3.5

@@ -4,6 +4,11 @@ from numpy import random                      #Add noise to pace
 from osgeo import gdal                        #Parse elevation profiles
 import matplotlib.pyplot as plt               #Plotting
 from datetime import datetime                 #Timing
+import sys
+
+'''
+Repairing a single file with damaged GPS segments.
+'''
 
 def convert_time(t):
     '''
@@ -12,7 +17,7 @@ def convert_time(t):
     '''
 
     #Convert seconds to full time
-    hours = int(t // 3600)
+    hours = int(t // 3600) % 24
     minutes = int((t % 3600) // 60)
     seconds = int(t % 60)
     microsecs = int(((t % 60) - seconds) * 1E6)
@@ -129,6 +134,12 @@ def parse_fit(file):
             #(year, month, day, hour, min, sec)
             current_time = record.get_value("timestamp")
             time_in_sec = current_time.hour * 3600 + current_time.minute * 60 + current_time.second
+
+            #Prevent loop-around at 24:00 mark
+            if time:
+                if time_in_sec - time[-1] < 0:
+                    time_in_sec += 24 * 3600
+            
             time.append(time_in_sec)
         else:
             #Anomalous time where no lat/long coords
@@ -162,22 +173,20 @@ R = 6371E3
 TO_RADIANS = pi / 180
 TO_MILES = 1 / 1609.34
 TO_MINUTES = 1 / 60
-PLOT = False
+PLOT = True
 
 #Load our .fit files
-bad_file = fitparse.FitFile("988J0721.FIT")  #Bad 0.92 miles file
-good_file = fitparse.FitFile("988J2227.FIT") #Good 4.50 miles file
+file = fitparse.FitFile("3954847400.FIT")    #GPS File
 route = gpxpy.parse(open("route.gpx", "r"))  #Actual route - made on gmap-pedometer
 
 #Get date
-for record in good_file.get_messages("record"):
+for record in file.get_messages("record"):
     d = record.get_value("timestamp")
     DATE = "{}-{:02d}-{:02d}".format(d.year, d.month, d.day)
     break
 
 #Parse
-bad_lat, bad_long, bad_time = parse_fit(bad_file)
-good_lat, good_long, good_time = parse_fit(good_file)
+lat, long, time = parse_fit(file)
 route_lat, route_long = parse_gpx(route)
 
 #Remove duplicate points in route
@@ -189,12 +198,61 @@ for i in indices:
     del route_lat[i]
     del route_long[i]
 
+#Interval in seconds containing bad segment
+#0 for start of file, -1 for end of file
+start_bad = 1921
+end_bad = -1
+
+#Find starting and ending indices if not 0 and -1
+if start_bad != 0:
+    start_bad = time.index(time[0] + start_bad) - 1
+if end_bad != -1:
+    end_bad = time.index(time[0] + end_bad)
+
+#Split into good and bad segments
+if start_bad == 0:
+    good_lat = lat[end_bad:]
+    good_long = long[end_bad:]
+    good_time = time[end_bad:]
+
+    bad_lat = lat[start_bad:end_bad]
+    bad_long = long[start_bad:end_bad]
+    bad_time = time[start_bad:end_bad]
+elif end_bad == -1:
+    good_lat = lat[0:start_bad]
+    good_long = long[0:start_bad]
+    good_time = time[0:start_bad]
+
+    bad_lat = lat[start_bad:]
+    bad_long = long[start_bad:]
+    bad_time = time[start_bad:]
+else:
+    good_lat = lat[0:start_bad] + lat[end_bad:]
+    good_long = long[0:start_bad] + long[end_bad:]
+    good_time = time[0:start_bad] + time[end_bad:]
+
+    bad_lat = lat[start_bad:end_bad]
+    bad_long = long[start_bad:end_bad]
+    bad_time = time[start_bad:end_bad]
+
 #Set ending point of route to starting point of good file
 route_lat[-1] = good_lat[0]
 route_long[-1] = good_long[0]
 
-#First calculate the total time
-bad_time_tot = (bad_time[0][-1] - bad_time[0][0]) + (bad_time[1][-1] - bad_time[1][0])
+#Calculate the total bad time - still inaccurate
+del_velocity = []
+for i in range(len(bad_lat)-1):
+    d = distance([bad_lat[i], bad_lat[i + 1]], [bad_long[i], bad_long[i + 1]])
+    t = bad_time[i + 1] - bad_time[i]
+    del_velocity.append(d / t)
+
+bad_time_tot = 0
+for i in range(1, len(bad_time)):
+    prev_time = bad_time[i - 1]
+
+    if del_velocity[i - 1] > 1.69:
+        bad_time_tot += bad_time[i] - prev_time
+print(bad_time_tot // 60, (bad_time_tot / 60) % (bad_time_tot // 60) * 60)
 
 #Now calculate the real total distance of the route
 route_distance = 0
@@ -225,7 +283,7 @@ for i in range(len(route_lat) - 1):
 tot_pace = (bad_time_tot * TO_MINUTES) / route_distance
 
 #Calculate route times to match avg pace with some noise
-route_time = [bad_time[0][0]]
+route_time = [bad_time[0]]
 for i in range(len(route_lat) - 1):
     current_pace = tot_pace + random.normal(0, 0.2)
     current_distance = distance([route_lat[i], route_lat[i + 1]],
@@ -235,11 +293,22 @@ for i in range(len(route_lat) - 1):
 #Now add fake point to account for time stopped during new portion of run 
 route_lat.append(route_lat[-1])
 route_long.append(route_long[-1])
-missing_time = bad_time[1][-1] - bad_time[0][0] - bad_time_tot
+missing_time = bad_time[-1] - bad_time[0] - bad_time_tot
 route_time.append(route_time[-1] + missing_time)
-final_lat = route_lat + good_lat
-final_long = route_long + good_long
-final_time = route_time + good_time
+
+#Create final arrays and get elevation data
+if start_bad == 0:
+    final_lat = route_lat + good_lat
+    final_long = route_long + good_long
+    final_time = route_time + good_time
+elif end_bad == -1:
+    final_lat = good_lat + route_lat
+    final_long = good_long + route_long 
+    final_time = good_time + route_time
+else:
+    final_lat = good_lat[:start_bad] + route_lat + good_lat[end_bad:]
+    final_long = good_long[:start_bad] + route_long + good_long[end_bad:]
+    final_time = good_time[:start_bad] + route_time + good_time[end_bad:]
 elevation = load_elevation(final_lat, final_long)
 
 #Finally write to new .gpx file

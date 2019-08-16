@@ -3,7 +3,8 @@ Sometimes the gps on your run/ride/swim/etc just sucks. Assuming that the total 
 
 ```
 To do:
-* Improve functionality to split bad segments and good segments from a single file
+* Fix time calculation for bad segment when repairing a single file - how to find paused time?
+* Code cleanup
 ```
 
 Here is a sample elevation profile of one of my broken runs showing the bad data, good data, and total fixed route:

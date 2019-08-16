@@ -3,8 +3,7 @@ Sometimes the gps on your run/ride/swim/etc just sucks. Assuming that the total 
 
 ```
 To do:
-* Figure out where extra 43 seconds moving time came from for my test run
-* Add noise to fixed route lat/long coordinates to better simulate run conditions
+* Improve functionality to split bad segments and good segments from a single file
 ```
 
 Here is a sample elevation profile of one of my broken runs showing the bad data, good data, and total fixed route:

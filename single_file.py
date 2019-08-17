@@ -256,7 +256,7 @@ print(bad_time_tot // 60, (bad_time_tot / 60) % (bad_time_tot // 60) * 60)
 
 #Now calculate the real total distance of the route
 route_distance = 0
-for i in range(len(route_lat) - 1):
+for i in range(1, len(route_lat) - 1):
     #Calculate angle of points
     x0 = route_long[i]
     x1 = route_long[i + 1]
@@ -271,10 +271,9 @@ for i in range(len(route_lat) - 1):
     percent = theta / (pi / 2)
     
     #Add noise to coordinates - add noise mostly in directory normal to velocity vector
+    #Don't want to add noise to start/end points
     route_lat[i] = route_lat[i] + random.normal(0, 2E-5) * (1 - percent)
-    route_lat[i + 1] = route_lat[i + 1] + random.normal(0, 2E-5) * (1 - percent)
     route_long[i] = route_long[i] + random.normal(0, 2E-5) * percent
-    route_long[i + 1] = route_long[i + 1] + random.normal(0, 2E-5) * percent
     
     route_distance += distance([route_lat[i], route_lat[i+1]],
                                [route_long[i], route_long[i+1]]) * TO_MILES

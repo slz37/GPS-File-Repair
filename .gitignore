@@ -1,5 +1,6 @@
 #FOLDERS
 data/
+__pycache__/
 
 #FILES
 *.FIT

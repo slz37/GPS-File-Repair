@@ -17,11 +17,19 @@ def convert_time(t):
     '''
 
     #Convert seconds to full time
-    hours = int(t // 3600) % 24
+    hours = int(t // 3600)
     minutes = int((t % 3600) // 60)
     seconds = int(t % 60)
     microsecs = int(((t % 60) - seconds) * 1E6)
-    full_time = DATE + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
+
+    #Different dates for hours > 24
+    if hours >= 24:
+        hours = hours % 24
+        temp_date = DATE[:-1] + str(int(DATE[-1]) + 1)
+        
+        full_time = temp_date + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
+    else:
+        full_time = DATE + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
 
     #Convert to datetime
     dt = datetime.strptime(full_time, "%Y-%m-%d %H:%M:%S.%f")
@@ -120,6 +128,7 @@ def parse_fit(file):
     lat = []
     long = []
     time = []
+    vel = []
     anom_time = []
 
     #Each time data is polled by watch, it is stored as a record.
@@ -130,6 +139,9 @@ def parse_fit(file):
             #Units of semicircles for lat and long
             lat.append(semi_to_degree(record.get_value("position_lat")))
             long.append(semi_to_degree(record.get_value("position_long")))
+
+            #Current velocity
+            vel.append(record.get_value("enhanced_speed"))
         
             #(year, month, day, hour, min, sec)
             current_time = record.get_value("timestamp")
@@ -147,9 +159,9 @@ def parse_fit(file):
             anom_time.append(current_time.hour * 3600 + current_time.minute * 60 + current_time.second)
 
     if anom_time:
-        return lat, long, [time, anom_time]
+        return lat, long, [time, anom_time], vel
     else:
-        return lat, long, time
+        return lat, long, time, vel
 
 def parse_gpx(file):
     '''
@@ -173,11 +185,16 @@ R = 6371E3
 TO_RADIANS = pi / 180
 TO_MILES = 1 / 1609.34
 TO_MINUTES = 1 / 60
-PLOT = True
+PLOT = False
+
+#Interval in seconds containing bad segment
+#0 for start of file, -1 for end of file
+start_bad = 1922
+end_bad = -1
 
 #Load our .fit files
 file = fitparse.FitFile("3954847400.FIT")    #GPS File
-route = gpxpy.parse(open("route.gpx", "r"))  #Actual route - made on gmap-pedometer
+route = gpxpy.parse(open("route_2.gpx", "r"))  #Actual route - made on gmap-pedometer
 
 #Get date
 for record in file.get_messages("record"):
@@ -186,7 +203,7 @@ for record in file.get_messages("record"):
     break
 
 #Parse
-lat, long, time = parse_fit(file)
+lat, long, time, vel = parse_fit(file)
 route_lat, route_long = parse_gpx(route)
 
 #Remove duplicate points in route
@@ -198,11 +215,6 @@ for i in indices:
     del route_lat[i]
     del route_long[i]
 
-#Interval in seconds containing bad segment
-#0 for start of file, -1 for end of file
-start_bad = 1921
-end_bad = -1
-
 #Find starting and ending indices if not 0 and -1
 if start_bad != 0:
     start_bad = time.index(time[0] + start_bad) - 1
@@ -211,48 +223,69 @@ if end_bad != -1:
 
 #Split into good and bad segments
 if start_bad == 0:
+    #Bad segment is at start of run
     good_lat = lat[end_bad:]
     good_long = long[end_bad:]
     good_time = time[end_bad:]
+    good_vel = vel[end_bad:]
 
     bad_lat = lat[start_bad:end_bad]
     bad_long = long[start_bad:end_bad]
     bad_time = time[start_bad:end_bad]
+    bad_vel = vel[start_bad:end_bad]
+
+    #Set ending point of route to starting point of good file
+    route_lat[-1] = good_lat[0]
+    route_long[-1] = good_long[0]
 elif end_bad == -1:
+    #Bad segment is at end of run
     good_lat = lat[0:start_bad]
     good_long = long[0:start_bad]
     good_time = time[0:start_bad]
+    good_vel = vel[0:start_bad]
 
     bad_lat = lat[start_bad:]
     bad_long = long[start_bad:]
     bad_time = time[start_bad:]
+    bad_vel = vel[start_bad:]
+
+    #Set starting point of route to ending point of good file
+    #route_lat[0] = good_lat[-1]
+    #route_long[0] = good_long[-1]
 else:
+    #Bad segment splits run in half
     good_lat = lat[0:start_bad] + lat[end_bad:]
     good_long = long[0:start_bad] + long[end_bad:]
     good_time = time[0:start_bad] + time[end_bad:]
+    good_vel = vel[0:start_bad] + vel[end_bad:]
 
     bad_lat = lat[start_bad:end_bad]
     bad_long = long[start_bad:end_bad]
     bad_time = time[start_bad:end_bad]
+    bad_vel = vel[start_bad:end_bad]
 
-#Set ending point of route to starting point of good file
-route_lat[-1] = good_lat[0]
-route_long[-1] = good_long[0]
+    #Set starting/ending point of route to ending/starting point of good file
+    route_lat[0] = lat[start_bad - 1]
+    route_long[0] = long[start_bad - 1]
+    route_lat[-1] = lat[end_bad]
+    route_long[-1] = long[end_bad]
 
 #Calculate the total bad time - still inaccurate
+'''
 del_velocity = []
 for i in range(len(bad_lat)-1):
     d = distance([bad_lat[i], bad_lat[i + 1]], [bad_long[i], bad_long[i + 1]])
     t = bad_time[i + 1] - bad_time[i]
     del_velocity.append(d / t)
+'''
 
 bad_time_tot = 0
 for i in range(1, len(bad_time)):
     prev_time = bad_time[i - 1]
 
-    if del_velocity[i - 1] > 1.69:
+    if bad_vel[i - 1] > 3.13:
         bad_time_tot += bad_time[i] - prev_time
-print(bad_time_tot // 60, (bad_time_tot / 60) % (bad_time_tot // 60) * 60)
+#print(bad_time_tot // 60, (bad_time_tot / 60) % (bad_time_tot // 60) * 60)
 
 #Now calculate the real total distance of the route
 route_distance = 0
@@ -270,8 +303,11 @@ for i in range(1, len(route_lat) - 1):
     theta = theta % (pi / 2)
     percent = theta / (pi / 2)
     
-    #Add noise to coordinates - add noise mostly in directory normal to velocity vector
-    #Don't want to add noise to start/end points
+    '''
+    Add noise to coordinates - add noise mostly in direction normal to velocity vector
+    Don't want to add noise to start/end points
+    Mess around with amplitude of noise - not sure what best value is
+    '''
     route_lat[i] = route_lat[i] + random.normal(0, 2E-5) * (1 - percent)
     route_long[i] = route_long[i] + random.normal(0, 2E-5) * percent
     

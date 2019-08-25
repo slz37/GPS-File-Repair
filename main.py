@@ -16,7 +16,15 @@ def convert_time(t):
     minutes = int((t % 3600) // 60)
     seconds = int(t % 60)
     microsecs = int(((t % 60) - seconds) * 1E6)
-    full_time = DATE + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
+
+    #Different dates for hours > 24
+    if hours >= 24:
+        hours = hours % 24
+        temp_date = DATE[:-1] + str(int(DATE[-1]) + 1)
+        
+        full_time = temp_date + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
+    else:
+        full_time = DATE + " {:02d}:{:02d}:{:02d}.{:06d}".format(hours, minutes, seconds, microsecs)
 
     #Convert to datetime
     dt = datetime.strptime(full_time, "%Y-%m-%d %H:%M:%S.%f")
@@ -115,6 +123,7 @@ def parse_fit(file):
     lat = []
     long = []
     time = []
+    vel = []
     anom_time = []
 
     #Each time data is polled by watch, it is stored as a record.
@@ -125,10 +134,19 @@ def parse_fit(file):
             #Units of semicircles for lat and long
             lat.append(semi_to_degree(record.get_value("position_lat")))
             long.append(semi_to_degree(record.get_value("position_long")))
+
+            #Current velocity
+            vel.append(record.get_value("enhanced_speed"))
         
             #(year, month, day, hour, min, sec)
             current_time = record.get_value("timestamp")
             time_in_sec = current_time.hour * 3600 + current_time.minute * 60 + current_time.second
+
+            #Prevent loop-around at 24:00 mark
+            if time:
+                if time_in_sec - time[-1] < 0:
+                    time_in_sec += 24 * 3600
+            
             time.append(time_in_sec)
         else:
             #Anomalous time where no lat/long coords
@@ -136,9 +154,9 @@ def parse_fit(file):
             anom_time.append(current_time.hour * 3600 + current_time.minute * 60 + current_time.second)
 
     if anom_time:
-        return lat, long, [time, anom_time]
+        return lat, long, [time, anom_time], vel
     else:
-        return lat, long, time
+        return lat, long, time, vel
 
 def parse_gpx(file):
     '''
@@ -176,8 +194,8 @@ for record in good_file.get_messages("record"):
     break
 
 #Parse
-bad_lat, bad_long, bad_time = parse_fit(bad_file)
-good_lat, good_long, good_time = parse_fit(good_file)
+bad_lat, bad_long, bad_time, bad_vel = parse_fit(bad_file)
+good_lat, good_long, good_time, good_vel = parse_fit(good_file)
 route_lat, route_long = parse_gpx(route)
 
 #Remove duplicate points in route
@@ -194,7 +212,10 @@ route_lat[-1] = good_lat[0]
 route_long[-1] = good_long[0]
 
 #First calculate the total time
-bad_time_tot = (bad_time[0][-1] - bad_time[0][0]) + (bad_time[1][-1] - bad_time[1][0])
+if len(bad_time_tot[0]) > 1:
+    bad_time_tot = (bad_time[0][-1] - bad_time[0][0]) + (bad_time[1][-1] - bad_time[1][0])
+else:
+    bad_time_tot = bad_time[-1] - bad_time[0]
 
 #Now calculate the real total distance of the route
 route_distance = 0

@@ -8,4 +8,4 @@ To do:
 ```
 
 Here is a sample elevation profile of one of my broken runs showing the bad data, good data, and total fixed route:
-<img align="center" src="./images/example_zoomed.png" alt="Example fixed route plot" title="Example fixed route plot" hspace="20"/>
+<img src="./images/example_zoomed.png" alt="Example fixed route plot" title="Example fixed route plot" width="50%"/><img src="./images/single_file_example_zoomed.png" alt="Example fixed route plot with a single file" title="Example fixed route plot with a single file" width="50%"/>
